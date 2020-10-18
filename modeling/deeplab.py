@@ -5,6 +5,22 @@ from modeling.sync_batchnorm.batchnorm import SynchronizedBatchNorm2d
 from modeling.aspp import build_aspp
 from modeling.decoder import build_decoder
 from modeling.backbone import build_backbone
+from modeling.module import *
+
+class ClassModule(nn.Module):
+    def __init__(self):
+        super(ClassModule, self).__init__()
+
+        self.conv0 = ConvBnReLU(2048, 256, 3, 3, (2,0))
+        self.conv1 = ConvBnReLU(256, 256, 3, 1, 1)
+        self.global_pooling = torch.squeeze(nn.AdaptiveMaxPool2d(1,1))
+        self.dense = nn.Linear(256, 256)
+        self.dropout = nn.Dropout(0.3)
+
+    def forward(self, x):
+        x = self.conv1(self.conv0(x))
+        x = self.dropout(self.dense((self.global_pooling(x))))
+        return x
 
 class DeepLab(nn.Module):
     def __init__(self, backbone='resnet', output_stride=16, num_classes=21,
@@ -20,15 +36,19 @@ class DeepLab(nn.Module):
 
         self.backbone = build_backbone(backbone, output_stride, BatchNorm)
         self.aspp = build_aspp(backbone, output_stride, BatchNorm)
+        self.classModule = ClassModule()
         self.decoder = build_decoder(num_classes, backbone, BatchNorm)
 
         self.freeze_bn = freeze_bn
 
     def forward(self, input):
         x, low_level_feat = self.backbone(input)
-        x = self.aspp(x)
-        x = self.decoder(x, low_level_feat)
-        x = F.interpolate(x, size=input.size()[2:], mode='bilinear', align_corners=True)
+        aspp_feat = self.aspp(x)
+        class_feat = self.classModule(x)
+        concat = torch.cat((aspp_feat,class_feat.repeat(30,40,1)), dim=1)
+
+        x = self.decoder(concat)
+        # x = F.interpolate(x, size=input.size()[2:], mode='bilinear', align_corners=True)
 
         return x
 
